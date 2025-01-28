@@ -3,24 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alert Converter</title>
+    <title>About OpenSearch</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <header>
-        <h1>Splunk to OpenSearch Alert Converter</h1>
+        <nav>
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="about.html">About</a></li>
+                <li><a href="tutorials.html">Tutorials</a></li>
+            </ul>
+        </nav>
     </header>
     <main>
-        <section>
-            <h2>Input Splunk Alert</h2>
-            <textarea id="splunk-alert" rows="10" cols="50" placeholder="Enter your Splunk alert SPL here..."></textarea>
-            <button onclick="convertAlert()">Convert to OpenSearch</button>
-        </section>
-        <section>
-            <h2>Converted OpenSearch Query</h2>
-            <textarea id="opensearch-query" rows="10" cols="50" readonly></textarea>
-        </section>
+        <h1>About OpenSearch</h1>
+        <p>OpenSearch is a community-driven project that allows you to search, analyze, and visualize your data in real time.</p>
+        <h2>History</h2>
+        <p>OpenSearch started as a fork of Elasticsearch, created after Elasticsearch changed its licensing model. It is fully open-source and supported by a diverse community.</p>
+        <h2>Use Cases</h2>
+        <ul>
+            <li>Log and event data analysis</li>
+            <li>Real-time search applications</li>
+            <li>Business intelligence and analytics dashboards</li>
+        </ul>
     </main>
-     
+    <footer>
+        <p>&copy; 2025 Learn OpenSearch</p>
+    </footer>
 </body>
 </html>
