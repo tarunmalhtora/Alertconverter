@@ -3,33 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>About OpenSearch</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>SPL to OpenSearch Converter</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        textarea { width: 100%; height: 100px; }
+        button { margin-top: 10px; }
+        pre { background: #f4f4f4; padding: 10px; border: 1px solid #ccc; }
+    </style>
 </head>
 <body>
-    <header>
-        <nav>
-            <ul>
-                <li><a href="index.html">Home</a></li>
-                <li><a href="about.html">About</a></li>
-                <li><a href="tutorials.html">Tutorials</a></li>
-            </ul>
-        </nav>
-    </header>
-    <main>
-        <h1>About OpenSearch</h1>
-        <p>OpenSearch is a community-driven project that allows you to search, analyze, and visualize your data in real time.</p>
-        <h2>History</h2>
-        <p>OpenSearch started as a fork of Elasticsearch, created after Elasticsearch changed its licensing model. It is fully open-source and supported by a diverse community.</p>
-        <h2>Use Cases</h2>
-        <ul>
-            <li>Log and event data analysis</li>
-            <li>Real-time search applications</li>
-            <li>Business intelligence and analytics dashboards</li>
-        </ul>
-    </main>
-    <footer>
-        <p>&copy; 2025 Learn OpenSearch</p>
-    </footer>
+    <h1>SPL to OpenSearch Converter</h1>
+    <textarea id="splInput" placeholder="Enter your SPL here..."></textarea>
+    <button onclick="convert()">Convert</button>
+    <h2>OpenSearch Query:</h2>
+    <pre id="output"></pre>
+
+    <script>
+        function convert() {
+            const spl = document.getElementById("splInput").value;
+            const opensearchQuery = splToOpenSearch(spl);
+            document.getElementById("output").textContent = opensearchQuery;
+        }
+
+        function splToOpenSearch(spl) {
+            // Basic conversion logic (to be enhanced)
+            // For now, let's just return a placeholder
+            return "Converted OpenSearch Query"; // Replace with actual logic later
+        }
+    </script>
 </body>
 </html>
