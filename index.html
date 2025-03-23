@@ -1,191 +1,28 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Page Title</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Display</title>
 </head>
 <body>
+    <h2>Python Code:</h2>
+    <pre>
+<code>
+import re
+import flask
+import json
+from flask import Flask, request, jsonify, render_template
 
-<h1>This is a Heading</h1>
-<p>app.py</p>
+app = Flask(__name__, static_folder="static", template_folder="templates")
 
-<p>import re                                                                                                                    </p>
-<p>import flask                                                                                                                 </p>
-<p>import json                                                                                                                  </p>
-<p>from flask import Flask, request, jsonify, render_template                                                                   </p>
-<p>                                                                                                                             </p>
-<p>app = Flask(__name__, static_folder="static", template_folder="templates")                                                   </p>
-<p>                                                                                                                             </p>
-<p>@app.route('/')                                                                                                              </p>
-<p>def home():                                                                                                                  </p>
-<p>    return render_template('home.html')                                                                                      </p>
-<p>                                                                                                                             </p>
-<p>@app.route('/convert', methods=['POST'])                                                                                     </p>
-<p>def convert_query():                                                                                                         </p>
-<p>    data = request.json                                                                                                      </p>
-<p>    spl_query = data.get("spl_query", "")                                                                                    </p>
-<p>                                                                                                                             </p>
-<p>    if not spl_query:                                                                                                        </p>
-<p>        return jsonify({"error": "No SPL query provided"}), 400                                                              </p>
-<p>                                                                                                                             </p>
-<p>    print(f"Received SPL Query: {spl_query}")                                                                                </p>
-<p>                                                                                                                             </p>
-<p>    Returned_list_output = clean_spl_query(spl_query)                                                                        </p>
-<p>                                                                                                                             </p>
-<p>    final_opensearch_query = Returned_list_output[1] #dict                                                                   </p>
-<p>    index_name = Returned_list_output[0] #string                                                                             </p>
-<p>    DSL_header = f"POST /{index_name}/_search\n"                                                                             </p>
-<p>                                                                                                                             </p>
-<p>    print("opensearch_query -->",final_opensearch_query,type(final_opensearch_query))                                        </p>
-<p>    print("index_name extracted",index_name,type(index_name))                                                                </p>
-<p>    print("DSL_header extracted",DSL_header,type(DSL_header))                                                                </p>
-<p>                                                                                                                             </p>
-<p>    # Extract and remove index_name before returning                                                                         </p>
-<p>    index_name = final_opensearch_query.pop("index_name", "default-index")                                                   </p>
-<p>    print("index_name lates",index_name,type(index_name))                                                                    </p>
-<p>                                                                                                                             </p>
-<p>                                                                                                                             </p>
-<p>    super_final_query_string = DSL_header.strip() + "\n" + json.dumps(final_opensearch_query, indent=2)                      </p>
-<p>                                                                                                                             </p>
-<p>    print("super_final_query_string",super_final_query_string,type(super_final_query_string))                                </p>
-<p>                                                                                                                             </p>
-<p>                                                                                                                             </p>
-<p>    # print("final_output-zzzz",super_final_query_string,type(super_final_query_string))                                     </p>
-<p>    # print("Final Output:\n", json.dumps(super_final_query_string, indent=2))                                               </p>
-<p>                                                                                                                             </p>
-<p>    return jsonify(super_final_query_string)                                                                                 </p>
-<p>    #print("sdfsfsdfs",jsonify(final_output))                                                                                </p>
-<p>                                                                                                                             </p>
-<p>def clean_spl_query(spl_query):                                                                                              </p>
-<p>    spl_query = re.sub(r'\s*=\s*', '=', spl_query)                                                                           </p>
-<p>    first_phase_query = spl_query.split("|")[0].strip()                                                                      </p>
-<p>    return parse_stats_clause(spl_query, first_phase_query)                                                                  </p>
-<p>                                                                                                                             </p>
-<p>def parse_stats_clause(spl_query, first_phase_query):                                                                        </p>
-<p>    metric_clauses = []                                                                                                      </p>
-<p>    by_clause_fields = []                                                                                                    </p>
-<p>                                                                                                                             </p>
-<p>    stats_match = re.search(r'\|\s*stats\s*([^|]+)', spl_query, re.IGNORECASE)                                               </p>
-<p>    if stats_match:                                                                                                          </p>
-<p>        stats_part = stats_match.group(1).strip()                                                                            </p>
-<p>                                                                                                                             </p>
-<p>        # ✅ Extract multiple functions + aliasing                                                                           </p>
-<p>        metrics = re.findall(r'(\w+)\(([\w.]+)?\)\s*(?:as\s+(\w+))?', stats_part, re.IGNORECASE)                             </p>
-<p>        for func, field, alias in metrics:                                                                                   </p>
-<p>            metric_clauses.append({                                                                                          </p>
-<p>                "function": func,                                                                                            </p>
-<p>                "field": field if field else "_id",                                                                          </p>
-<p>                "alias": alias if alias else func                                                                            </p>
-<p>            })                                                                                                               </p>
-<p>                                                                                                                             </p>
-<p>        # ✅ Handle standalone functions like `count as total`                                                               </p>
-<p>        standalone_metrics = re.findall(r'\b(\w+)\s*(?:as\s+(\w+))?', stats_part)                                            </p>
-<p>        for func, alias in standalone_metrics:                                                                               </p>
-<p>            if func not in [m["function"] for m in metric_clauses]:                                                          </p>
-<p>                metric_clauses.append({                                                                                      </p>
-<p>                    "function": func,                                                                                        </p>
-<p>                    "field": "_id",                                                                                          </p>
-<p>                    "alias": alias if alias else func                                                                        </p>
-<p>                })                                                                                                           </p>
-<p>                                                                                                                             </p>
-<p>        # ✅ Handle multiple `by` fields (comma + space separated)                                                           </p>
-<p>        by_match = re.search(r'\bby\s+(.+)', stats_part)                                                                     </p>
-<p>        if by_match:                                                                                                         </p>
-<p>            # Split by ',' or whitespace                                                                                     </p>
-<p>            by_clause_fields = re.split(r'\s*,\s*|\s+', by_match.group(1).strip())                                           </p>
-<p>                                                                                                                             </p>
-<p>    return convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields)                 </p>
-<p>                                                                                                                             </p>
-<p>def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields):                       </p>
-<p>    key = []                                                                                                                 </p>
-<p>    values = []                                                                                                              </p>
-<p>                                                                                                                             </p>
-<p>    # ✅ Extract key-value pairs from the first phase query                                                                  </p>
-<p>    field_value_pattern = re.findall(r'(\S+)\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(\S+))', first_phase_query)                     </p>
-<p>                                                                                                                             </p>
-<p>    for field, value1, value2, value3 in field_value_pattern:                                                                </p>
-<p>        final_value = value1 or value2 or value3                                                                             </p>
-<p>        key.append(field)                                                                                                    </p>
-<p>        values.append(final_value)                                                                                           </p>
-<p>                                                                                                                             </p>
-<p>    Dic_Mandatory_Fields = dict(zip(key, values))                                                                            </p>
-<p>    index_name = Dic_Mandatory_Fields.get("index", "default-index")                                                          </p>
-<p>                                                                                                                             </p>
-<p>    # ✅ Build the filter clause (EXCLUDING index)                                                                           </p>
-<p>    additional_fields = []                                                                                                   </p>
-<p>    for k, v in Dic_Mandatory_Fields.items():                                                                                </p>
-<p>        if k != "index":                                                                                                     </p>
-<p>            if '*' in v:                                                                                                     </p>
-<p>                additional_fields.append({"wildcard": {k: v}})                                                               </p>
-<p>            else:                                                                                                            </p>
-<p>                additional_fields.append({"term": {k: v}})                                                                   </p>
-<p>                                                                                                                             </p>
-<p>    opensearch_query = {                                                                                                     </p>
-<p>        "size": 0,                                                                                                           </p>
-<p>        "query": {                                                                                                           </p>
-<p>            "bool": {                                                                                                        </p>
-<p>                "must": additional_fields                                                                                    </p>
-<p>            }                                                                                                                </p>
-<p>        },                                                                                                                   </p>
-<p>        "aggs": {}                                                                                                           </p>
-<p>    }                                                                                                                        </p>
-<p>                                                                                                                             </p>
-<p>    if metric_clauses:                                                                                                       </p>
-<p>        if by_clause_fields:                                                                                                 </p>
-<p>            # ✅ Handle nested `by` fields                                                                                   </p>
-<p>            current = opensearch_query["aggs"]                                                                               </p>
-<p>            for field in by_clause_fields:                                                                                   </p>
-<p>                current[field] = {                                                                                           </p>
-<p>                    "terms": {                                                                                               </p>
-<p>                        "field": field                                                                                       </p>
-<p>                    },                                                                                                       </p>
-<p>                    "aggs": {}                                                                                               </p>
-<p>                }                                                                                                            </p>
-<p>                current = current[field]["aggs"]                                                                             </p>
-<p>                                                                                                                             </p>
-<p>            for metric in metric_clauses:                                                                                    </p>
-<p>                function = metric["function"].lower()                                                                        </p>
-<p>                field = metric["field"]                                                                                      </p>
-<p>                alias = metric["alias"]                                                                                      </p>
-<p>                                                                                                                             </p>
-<p>                if function == "count":                                                                                      </p>
-<p>                    current[alias] = {"value_count": {"field": field}}                                                       </p>
-<p>                elif function in ["max", "min", "avg", "sum"]:                                                               </p>
-<p>                    current[alias] = {function: {"field": field}}                                                            </p>
-<p>                elif function == "percentile":                                                                               </p>
-<p>                    current[alias] = {"percentiles": {"field": field}}                                                       </p>
-<p>                elif function == "median":                                                                                   </p>
-<p>                    current[alias] = {"percentiles": {"field": field, "percents": [50]}}                                     </p>
-<p>                elif function == "dc":                                                                                       </p>
-<p>                    current[alias] = {"cardinality": {"field": field}}                                                       </p>
-<p>        else:                                                                                                                </p>
-<p>            # ✅ If no `by` clause, apply functions at the top level                                                         </p>
-<p>            for metric in metric_clauses:                                                                                    </p>
-<p>                function = metric["function"].lower()                                                                        </p>
-<p>                field = metric["field"]                                                                                      </p>
-<p>                alias = metric["alias"]                                                                                      </p>
-<p>                                                                                                                             </p>
-<p>                if function == "count":                                                                                      </p>
-<p>                    opensearch_query["aggs"][alias] = {"value_count": {"field": field}}                                      </p>
-<p>                elif function in ["max", "min", "avg", "sum"]:                                                               </p>
-<p>                    opensearch_query["aggs"][alias] = {function: {"field": field}}                                           </p>
-<p>                elif function == "percentile":                                                                               </p>
-<p>                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field}}                                      </p>
-<p>                elif function == "median":                                                                                   </p>
-<p>                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [50]}}                    </p>
-<p>                elif "perc" in function:                                                                                     </p>
-<p>                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [90]}}                    </p>
-<p>                elif function == "dc":                                                                                       </p>
-<p>                    opensearch_query["aggs"][alias] = {"cardinality": {"field": field}}                                      </p>
-<p>    print("opensearch_query -> sele",opensearch_query)                                                                       </p>
-<p>    dic_up = []                                                                                                              </p>
-<p>    dic_up = [index_name,opensearch_query]                                                                                   </p>
-<p>    print("dic_up",type(dic_up))                                                                                             </p>
-<p>    #return opensearch_query                                                                                                 </p>
-<p>    return dic_up                                                                                                            </p>
-<p>                                                                                                                             </p>
-<p>if __name__ == '__main__':                                                                                                   </p>
-<p>    app.run(debug=True)                                                                                                      </p>
+@app.route('/')
+def home():
+    return render_template('home.html')
+
+@app.route('/convert', methods=['POST'])
+def convert_query():
+</code>
+    </pre>
 </body>
 </html>
-
-
