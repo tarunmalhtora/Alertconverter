@@ -322,3 +322,625 @@ button:hover {
     </pre>
 </body>
 </html>
+
+	********Phase-2******************************************************************************************************
+app.py
+
+	import re
+import flask
+import json
+from flask import Flask, request, jsonify, render_template
+
+app = Flask(__name__, static_folder="static", template_folder="templates")
+
+
+@app.route('/')
+def home():
+    return render_template('home.html')
+
+@app.route('/convert', methods=['POST'])
+def convert_query():
+    data = request.json
+    spl_query = data.get("spl_query", "")
+
+    if not spl_query:
+        return jsonify({"error": "No SPL query provided"}), 400
+
+    print(f"Received SPL Query: {spl_query}")
+
+    Returned_list_output = clean_spl_query(spl_query)
+    
+    final_opensearch_query = Returned_list_output[1] #dict
+    index_name = Returned_list_output[0] #string
+    DSL_header = f"POST /{index_name}/_search\n" 
+
+    print("opensearch_query -->",final_opensearch_query,type(final_opensearch_query))
+    print("index_name extracted",index_name,type(index_name))
+    print("DSL_header extracted",DSL_header,type(DSL_header))
+
+    # Extract and remove index_name before returning
+    index_name = final_opensearch_query.pop("index_name", "default-index")
+    print("index_name lates",index_name,type(index_name))
+
+
+    super_final_query_string = DSL_header.strip() + "\n" + json.dumps(final_opensearch_query, indent=2)
+
+    print("super_final_query_string",super_final_query_string,type(super_final_query_string))
+
+
+    # print("final_output-zzzz",super_final_query_string,type(super_final_query_string))
+    # print("Final Output:\n", json.dumps(super_final_query_string, indent=2))
+
+    return jsonify(super_final_query_string)
+    #print("sdfsfsdfs",jsonify(final_output))
+def clean_spl_query(spl_query):
+    print("Inside- clean_spl_query function")
+    spl_query = re.sub(r'\s*=\s*', '=', spl_query)
+    first_phase_query = spl_query.split("|")[0].strip()
+    return parse_stats_clause(spl_query, first_phase_query)
+
+def parse_stats_clause(spl_query, first_phase_query):
+    print("Inside- parse_stats_clause function")
+    metric_clauses = []
+    by_clause_fields = []
+    percentile_number = None
+
+    # Extract stats functions(field) and aliases
+    stats_match = re.search(r'\|\s*stats\s*([^|]+)', spl_query, re.IGNORECASE)
+    if stats_match:
+        stats_part = stats_match.group(1).strip()
+        print("stats_part", stats_part)
+
+        # Extract multiple functions + aliasing
+        metrics = re.findall(r'(\w+)\(([\w.]+)?\)\s*(?:as\s+(\w+))?', stats_part, re.IGNORECASE)
+        print("metrics", metrics)
+        for func, field, alias in metrics:
+            metric_clauses.append({
+                "function": func,
+                "field": field if field else "_id",
+                "alias": alias if alias else func
+            })
+        print("metric_clauses", metric_clauses)
+
+        # if not metric_clauses:
+        #     raise ValueError("No valid metric functions found in stats clause.")
+        # Handle percentile extraction
+        if "perc" in stats_part:
+            percentile_match = re.search(r'perc(\d+)', stats_part, re.IGNORECASE)
+            if percentile_match:
+                percentile_number = int(percentile_match.group(1))
+            print("percentile_number", percentile_number)
+
+        # Handle standalone functions like `count as total`
+        standalone_metrics = re.findall(r'\b(\w+)\s*(?:as\s+(\w+))?', stats_part)
+        print("standalone_metrics", standalone_metrics)
+        for func, alias in standalone_metrics:
+            if func not in [m["function"] for m in metric_clauses]:
+                metric_clauses.append({
+                    "function": func,
+                    "field": "_id",
+                    "alias": alias if alias else func
+                })
+
+        # Handle multiple `by` fields (comma + space separated)
+        by_match = re.search(r'\bby\s+(.+)', stats_part)
+        if by_match:
+	        # Split by ',' or whitespace	
+            by_clause_fields = re.split(r'\s*,\s*|\s+', by_match.group(1).strip())
+            print("by_clause_fields", by_clause_fields)
+
+    return convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields, percentile_number)
+
+def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields, percentile_number):
+    key = []  
+    values = []
+    
+    # Extract key-value pairs from the first phase query
+    field_value_pattern = re.findall(r'(\S+)\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(\S+))', first_phase_query)
+    print("field_value_pattern", field_value_pattern)
+    for field, value1, value2, value3 in field_value_pattern:
+        final_value = value1 or value2 or value3
+        key.append(field)
+        values.append(final_value)
+
+    Dic_Mandatory_Fields = dict(zip(key, values))
+    index_name = Dic_Mandatory_Fields.get("index", "default-index")
+    print("key", key)
+    print("values", values)
+
+    # Build the filter clause (EXCLUDING index)
+    additional_fields = []
+    for k, v in Dic_Mandatory_Fields.items():
+        if k != "index":
+            if '*' in v:
+                additional_fields.append({"wildcard": {k: v}})
+            else:
+                additional_fields.append({"term": {k: v}})
+    print("additional_fields", additional_fields)
+    
+    opensearch_query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "must": additional_fields if additional_fields else {"match_all": {}},
+            }
+        },
+        "aggs": {}
+    }
+    print("so far opensearch_query,", opensearch_query)
+
+    if metric_clauses:
+        if by_clause_fields:
+            # Handle nested `by` fields
+            current = opensearch_query["aggs"]
+            for field in by_clause_fields:
+                current[field] = {
+                    "terms": {
+                        "field": field
+                    },
+                    "aggs": {}
+                }
+                current = current[field]["aggs"]
+
+            for metric in metric_clauses:
+                function = metric["function"].lower()
+                field = metric["field"]
+                alias = metric["alias"]
+
+                if function == "count":
+                    current[alias] = {"value_count": {"field": field}}
+                elif function in ["max", "min", "avg", "sum"]:
+                    current[alias] = {function: {"field": field}}
+                elif "perc" in function:
+                    current[alias] = {"percentiles": {"field": field, "percents": [percentile_number]}}
+                elif function == "percentile":
+                    current[alias] = {"percentiles": {"field": field}}
+                elif function == "median":
+                    current[alias] = {"percentiles": {"field": field, "percents": [50]}}
+                elif function == "dc":
+                    current[alias] = {"cardinality": {"field": field}}
+        else:
+            # If no `by` clause, apply functions at the top level
+            for metric in metric_clauses:
+                function = metric["function"].lower()
+                field = metric["field"]
+                alias = metric["alias"]
+
+                if function == "count":
+                    opensearch_query["aggs"][alias] = {"value_count": {"field": field}}
+                elif function in ["max", "min", "avg", "sum"]:
+                    opensearch_query["aggs"][alias] = {function: {"field": field}}
+                elif "perc" in function:
+                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [percentile_number]}}
+                elif function == "percentile":
+                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field}}
+                elif function == "median":
+                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [50]}}
+                elif function == "dc":
+                    opensearch_query["aggs"][alias] = {"cardinality": {"field": field}}
+
+    print("opensearch_query -> sele", opensearch_query)
+    dic_up = []
+    dic_up = [index_name,opensearch_query]
+    print("dic_up",type(dic_up))              
+    #return opensearch_query
+    return dic_up
+    
+if __name__ == '__main__':
+    app.run(debug=True)
+    
+    *******************************************home.html*************************************
+
+<!-- 	<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPL to OpenSearch Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+    <div class="container-fluid professional-container">
+        <header class="app-header">
+            <h1><i class="fas fa-exchange-alt me-2"></i>SPL to OpenSearch DSL Converter<i class="fas fa-exchange-alt ms-2"></i></h1>
+            <h3 class="subtitle">NEO Opensearch migration tool</h3>
+        </header>
+
+        <main class="converter-container">
+            <section class="input-section">
+                <div class="input-header">
+                    <h2><i class="fas fa-code me-2"></i>Splunk SPL Query</h2>
+                </div>
+                <textarea id="splQuery" class="form-control" placeholder="index=nmp_nonprod* status=down | stats count by host"></textarea>
+            </section>
+            <!-- Floating button -->
+<!--             <div class="text-center my-4">
+                <button id="convertBtn" class="btn btn-primary btn-lg px-4">
+                    <i class="fas fa-exchange-alt me-2"></i> Convert Query
+                </button>
+            </div>
+            <section class="output-section">
+                <div class="output-header">
+                    <h2><i class="fas fa-code me-2"></i>OpenSearch DSL Query</h2>
+                </div>
+                
+                <ul class="nav nav-tabs" id="outputTabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" data-bs-toggle="tab" href="#formattedView">Formatted JSON</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-bs-toggle="tab" href="#rawView">Raw Output</a>
+                    </li>
+                </ul>
+
+                <div class="tab-content">
+                    <div id="formattedView" class="tab-pane fade show active">
+                        <div class="output-container">
+                            <pre id="jsonResult"><code>{"converted": "query_will_appear_here"}</code></pre>
+                        </div>
+                    </div>
+                    <div id="rawView" class="tab-pane fade">
+                        <div class="output-container">
+                            <pre id="rawResult">POST /_search\n{"query": {"match_all": {}}}</pre>
+                        </div>
+                    </div>
+                </div> -->
+
+<!--                 <div class="output-actions">
+                    <button id="copyBtn" class="btn btn-outline-secondary">
+                        <i class="far fa-copy me-1"></i> Copy JSON
+                    </button>
+                    <span class="status-indicator" id="statusIndicator"></span>
+                </div>
+            </section>
+        </main>
+    </div> -->
+
+<!--     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="static/scripts.js"></script>
+</body> -->
+</html>
+ -->
+***************************************************************js**********************************************
+	document.addEventListener('DOMContentLoaded', function() {
+    // Elements
+    const convertBtn = document.getElementById('convertBtn');
+    const copyBtn = document.getElementById('copyBtn');
+    const splQuery = document.getElementById('splQuery');
+    const jsonResult = document.getElementById('jsonResult');
+    const rawResult = document.getElementById('rawResult');
+    const statusIndicator = document.getElementById('statusIndicator');
+
+    // Convert function
+    convertBtn.addEventListener('click', async function() {
+        if (!splQuery.value.trim()) {
+            showStatus('Please enter a query', 'error');
+            return;
+        }
+
+        showStatus('Converting...', 'processing');
+        setLoading(true);
+
+        try {
+            const response = await fetch('/convert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spl_query: splQuery.value })
+            });
+
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+            const rawData = await response.text();
+            rawResult.textContent = rawData;
+            
+            // Process for JSON view
+            try {
+                const jsonData = tryParseJson(rawData);
+                jsonResult.innerHTML = syntaxHighlight(jsonData);
+                showStatus('Conversion successful', 'success');
+            } catch (e) {
+                jsonResult.innerHTML = syntaxHighlight({
+                    convertedQuery: "Could not parse as JSON",
+                    rawOutput: rawData
+                });
+                showStatus('Converted (raw output)', 'warning');
+            }
+
+        } catch (error) {
+            showStatus(`Error: ${error.message}`, 'error');
+            jsonResult.innerHTML = syntaxHighlight({
+                error: error.message,
+                originalQuery: splQuery.value
+            });
+        } finally {
+            setLoading(false);
+        }
+    });
+
+    // Helper functions
+    function tryParseJson(raw) {
+        // First try direct parse
+        try { return JSON.parse(raw); } catch (e) { /* continue */ }
+        
+        // Try extracting JSON from string
+        const jsonMatch = raw.match(/{.*}|\[.*]/s);
+        if (jsonMatch) {
+            try { return JSON.parse(jsonMatch[0]); } catch (e) { /* continue */ }
+        }
+        
+        // Fallback to reconstruction
+        return reconstructJson(raw);
+    }
+
+    function reconstructJson(raw) {
+        const result = {};
+        // Extract key-value pairs
+        const pairs = raw.match(/(\w+)\s*[:=]\s*([^,\s\}]+)/g) || [];
+        
+        pairs.forEach(pair => {
+            const [key, val] = pair.split(/[:=]/).map(s => s.trim());
+            if (key && val) {
+                result[key] = isNaN(val) ? val : Number(val);
+            }
+        });
+        
+        return Object.keys(result).length ? result : { rawOutput: raw };
+    }
+
+    function syntaxHighlight(json) {
+        if (typeof json === 'string') {
+            try { json = JSON.parse(json); }
+<!--             catch (e) { return `<span class="text-danger">${json}</span>`; } -->
+        }
+        
+        const jsonStr = JSON.stringify(json, null, 2)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        
+        return jsonStr.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, 
+            function(match) {
+                let cls = 'token punctuation';
+                if (/^"/.test(match)) {
+                    cls = /:$/.test(match) ? 'token key' : 'token string';
+                } else if (/true|false/.test(match)) {
+                    cls = 'token boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'token null';
+                } else if (!isNaN(parseFloat(match))) {
+                    cls = 'token number';
+                }
+<!--                 return `<span class="${cls}">${match}</span>`; -->
+            });
+    }
+
+    function setLoading(isLoading) {
+        convertBtn.disabled = isLoading;
+        convertBtn.innerHTML = isLoading
+<!--             ? '<i class="fas fa-spinner fa-spin me-1"></i> Converting'
+            : '<i class="fas fa-sync-alt me-1"></i> Convert'; -->
+    }
+
+    function showStatus(message, type) {
+        statusIndicator.textContent = message;
+        statusIndicator.className = `status-indicator text-${type}`;
+    }
+
+    // Copy functionality
+    copyBtn.addEventListener('click', () => {
+        const activeTab = document.querySelector('.tab-pane.active');
+        const textToCopy = activeTab.querySelector('pre').textContent;
+        
+        navigator.clipboard.writeText(textToCopy)
+            .then(() => {
+                const originalText = copyBtn.innerHTML;
+<!--                 copyBtn.innerHTML = '<i class="fas fa-check me-1"></i> Copied!'; -->
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                }, 2000);
+            })
+            .catch(err => {
+                showStatus('Copy failed', 'error');
+                console.error('Copy failed:', err);
+            });
+    });
+
+    // Ctrl+Enter shortcut for conversion
+    splQuery.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+            convertBtn.click();
+        }
+    });
+});
+
+*****************************************************Csss*(*******************************************************
+
+	:root {
+    --primary-color: #4a6fa5;
+    --secondary-color: #166d67;
+}
+
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.professional-container {
+    max-width: 1200px;
+    padding: 2rem;
+}
+
+.app-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.app-header h1 {
+    color: var(--primary-color);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.app-header .subtitle {
+    color: var(--secondary-color);
+    font-style: italic;
+}
+
+.converter-container {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.input-section, .output-section {
+    margin-bottom: 2rem;
+}
+
+.input-header, .output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.input-header h2, .output-header h2 {
+    color: var(--primary-color);
+    font-size: 1.4rem;
+    margin: 0;
+}
+
+textarea.form-control {
+    min-height: 120px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.9rem;
+}
+
+#convertBtn {
+    background-color: var(--primary-color);
+    border: none;
+    padding: 0.5rem 1.25rem;
+    font-weight: 500;
+}
+
+#convertBtn:hover {
+    background-color: #3a5a8c;
+}
+
+.nav-tabs {
+    border-bottom: 2px solid #dee2e6;
+    margin-bottom: 1rem;
+}
+
+.nav-tabs .nav-link {
+    color: #495057;
+    font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--primary-color);
+    border-color: #dee2e6 #dee2e6 #fff;
+    border-width: 2px;
+}
+
+.output-container {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1rem;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85rem;
+}
+
+.output-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.status-indicator {
+    font-size: 0.9rem;
+    color: var(--secondary-color);
+}
+
+.status-indicator.text-success {
+    color: #28a745;
+}
+
+.status-indicator.text-error {
+    color: #dc3545;
+}
+
+.status-indicator.text-warning {
+    color: #ffc107;
+}
+
+.status-indicator.text-processing {
+    color: var(--primary-color);
+}
+
+.btn-outline-secondary {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+}
+
+.btn-outline-secondary:hover {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+/* Syntax highlighting */
+.token.key {
+    color: #d63200;
+}
+.token.string {
+    color: #005cc5;
+}
+.token.number {
+    color: #005cc5;
+}
+.token.boolean {
+    color: #d63200;
+}
+.token.null {
+    color: #d63200;
+}
+.token.punctuation {
+    color: #24292e;
+}
+
+@media (max-width: 768px) {
+    .professional-container {
+        padding: 1rem;
+    }
+    
+    .input-header, .output-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+}
+/* Add to styles.css */
+#convertBtn {
+    min-width: 120px; /* Ensures consistent button width */
+}
+
+/* For Option 2 (floating button) */
+.btn-lg {
+    padding: 0.5rem 1.5rem;
+    font-size: 1.1rem;
+}
