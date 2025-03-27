@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
+
 @app.route('/')
 def home():
     return render_template('home.html')
@@ -56,31 +57,47 @@ def convert_query():
 
     return jsonify(super_final_query_string)
     #print("sdfsfsdfs",jsonify(final_output))
-
 def clean_spl_query(spl_query):
+    print("Inside- clean_spl_query function")
     spl_query = re.sub(r'\s*=\s*', '=', spl_query)
     first_phase_query = spl_query.split("|")[0].strip()
     return parse_stats_clause(spl_query, first_phase_query)
 
 def parse_stats_clause(spl_query, first_phase_query):
+    print("Inside- parse_stats_clause function")
     metric_clauses = []
     by_clause_fields = []
+    percentile_number = None
 
+    # Extract stats functions(field) and aliases
     stats_match = re.search(r'\|\s*stats\s*([^|]+)', spl_query, re.IGNORECASE)
     if stats_match:
         stats_part = stats_match.group(1).strip()
+        print("stats_part", stats_part)
 
-        # ✅ Extract multiple functions + aliasing
+        # Extract multiple functions + aliasing
         metrics = re.findall(r'(\w+)\(([\w.]+)?\)\s*(?:as\s+(\w+))?', stats_part, re.IGNORECASE)
+        print("metrics", metrics)
         for func, field, alias in metrics:
             metric_clauses.append({
                 "function": func,
                 "field": field if field else "_id",
                 "alias": alias if alias else func
             })
+        print("metric_clauses", metric_clauses)
 
-        # ✅ Handle standalone functions like `count as total`
+        # if not metric_clauses:
+        #     raise ValueError("No valid metric functions found in stats clause.")
+        # Handle percentile extraction
+        if "perc" in stats_part:
+            percentile_match = re.search(r'perc(\d+)', stats_part, re.IGNORECASE)
+            if percentile_match:
+                percentile_number = int(percentile_match.group(1))
+            print("percentile_number", percentile_number)
+
+        # Handle standalone functions like `count as total`
         standalone_metrics = re.findall(r'\b(\w+)\s*(?:as\s+(\w+))?', stats_part)
+        print("standalone_metrics", standalone_metrics)
         for func, alias in standalone_metrics:
             if func not in [m["function"] for m in metric_clauses]:
                 metric_clauses.append({
@@ -89,21 +106,22 @@ def parse_stats_clause(spl_query, first_phase_query):
                     "alias": alias if alias else func
                 })
 
-        # ✅ Handle multiple `by` fields (comma + space separated)
+        # Handle multiple `by` fields (comma + space separated)
         by_match = re.search(r'\bby\s+(.+)', stats_part)
         if by_match:
-            # Split by ',' or whitespace
+	        # Split by ',' or whitespace	
             by_clause_fields = re.split(r'\s*,\s*|\s+', by_match.group(1).strip())
+            print("by_clause_fields", by_clause_fields)
 
-    return convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields)
+    return convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields, percentile_number)
 
-def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields):
+def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_clauses, by_clause_fields, percentile_number):
     key = []  
     values = []
     
-    # ✅ Extract key-value pairs from the first phase query
+    # Extract key-value pairs from the first phase query
     field_value_pattern = re.findall(r'(\S+)\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(\S+))', first_phase_query)
-    
+    print("field_value_pattern", field_value_pattern)
     for field, value1, value2, value3 in field_value_pattern:
         final_value = value1 or value2 or value3
         key.append(field)
@@ -111,8 +129,10 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
 
     Dic_Mandatory_Fields = dict(zip(key, values))
     index_name = Dic_Mandatory_Fields.get("index", "default-index")
-    
-    # ✅ Build the filter clause (EXCLUDING index)
+    print("key", key)
+    print("values", values)
+
+    # Build the filter clause (EXCLUDING index)
     additional_fields = []
     for k, v in Dic_Mandatory_Fields.items():
         if k != "index":
@@ -120,20 +140,22 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
                 additional_fields.append({"wildcard": {k: v}})
             else:
                 additional_fields.append({"term": {k: v}})
-
+    print("additional_fields", additional_fields)
+    
     opensearch_query = {
         "size": 0,
         "query": {
             "bool": {
-                "must": additional_fields
+                "must": additional_fields if additional_fields else {"match_all": {}},
             }
         },
         "aggs": {}
     }
+    print("so far opensearch_query,", opensearch_query)
 
     if metric_clauses:
         if by_clause_fields:
-            # ✅ Handle nested `by` fields
+            # Handle nested `by` fields
             current = opensearch_query["aggs"]
             for field in by_clause_fields:
                 current[field] = {
@@ -153,6 +175,8 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
                     current[alias] = {"value_count": {"field": field}}
                 elif function in ["max", "min", "avg", "sum"]:
                     current[alias] = {function: {"field": field}}
+                elif "perc" in function:
+                    current[alias] = {"percentiles": {"field": field, "percents": [percentile_number]}}
                 elif function == "percentile":
                     current[alias] = {"percentiles": {"field": field}}
                 elif function == "median":
@@ -160,7 +184,7 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
                 elif function == "dc":
                     current[alias] = {"cardinality": {"field": field}}
         else:
-            # ✅ If no `by` clause, apply functions at the top level
+            # If no `by` clause, apply functions at the top level
             for metric in metric_clauses:
                 function = metric["function"].lower()
                 field = metric["field"]
@@ -170,15 +194,16 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
                     opensearch_query["aggs"][alias] = {"value_count": {"field": field}}
                 elif function in ["max", "min", "avg", "sum"]:
                     opensearch_query["aggs"][alias] = {function: {"field": field}}
+                elif "perc" in function:
+                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [percentile_number]}}
                 elif function == "percentile":
                     opensearch_query["aggs"][alias] = {"percentiles": {"field": field}}
                 elif function == "median":
                     opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [50]}}
-                elif "perc" in function:
-                    opensearch_query["aggs"][alias] = {"percentiles": {"field": field, "percents": [90]}}    
                 elif function == "dc":
                     opensearch_query["aggs"][alias] = {"cardinality": {"field": field}}
-    print("opensearch_query -> sele",opensearch_query)
+
+    print("opensearch_query -> sele", opensearch_query)
     dic_up = []
     dic_up = [index_name,opensearch_query]
     print("dic_up",type(dic_up))              
@@ -187,7 +212,8 @@ def convert_spl_to_opensearch_complex(spl_query, first_phase_query, metric_claus
     
 if __name__ == '__main__':
     app.run(debug=True)
-
+    
+    
     #############################################################################################
 home.html
     x<!DOCTYPE html>
